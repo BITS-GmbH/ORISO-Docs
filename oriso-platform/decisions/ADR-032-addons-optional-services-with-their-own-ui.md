@@ -171,22 +171,27 @@ There is one kind of add-on. It declares in its manifest which **slots** its app
 
 ## Implementation status (2026-11-12)
 
+Everything marked "implemented" runs on the DigiSucht test instance (ORISO 2.0.15).
+
 | Part | State |
 |---|---|
-| AddonService: discovery, enablement per Träger and agency, gateway with signed tokens and verified context, settings, statistics, host API for settings | implemented, running on the DigiSucht test instance |
-| Registry in context (agency, session) and dynamic app visibility with badges | in progress |
-| Gateway enforcement of core gates (DPA, account inactivity) | not implemented |
-| Host API for notifications and audit entries; calendar entries; add-on tab in the admin Logs area | implemented, running on the DigiSucht test instance (notifications need the UserService endpoint `POST /users/event-notifications/addon`) |
-| Host API for context, lifecycle events, data export | not implemented |
-| ORISO-Frontend: all four web-app slots | implemented, PR to `dev` |
-| ORISO-Admin: enablement, agency overrides, settings form, statistics, `admin.page` | implemented, PR to `dev` |
+| AddonService: discovery, enablement per Träger and agency, gateway with signed tokens and verified context, settings, statistics | implemented |
+| Registry in context (agency, session) and dynamic app visibility with badges | implemented |
+| Host API: settings, notifications, write-only audit entries; calendar aggregation | implemented |
+| UserService: `POST /users/event-notifications/addon` (technical role) creating `ADDON_NOTIFICATION` events with preference-driven e-mail | implemented (core change, PR to `dev`) |
+| UserService: `GET /users/consultants/sessions/{id}` no longer fails with a LazyInitializationException (the case-view session check depends on it; the bug is also on `dev`) | fixed (PR to `dev`) |
+| ORISO-Frontend: all four web-app slots, registry per case, badges, `ADDON_NOTIFICATION` in the Activity Timeline, add-on dates in the upcoming-dates zone of the conversation list | implemented, PR to `dev` |
+| ORISO-Admin: enablement, agency overrides, settings form, statistics, `admin.page`, add-on tab in the Logs area | implemented, PR to `dev` |
 | ORISO-Helm: AddonService, disabled by default | PR |
-| First add-on: DigiSucht tools, app "Ausgangssituation und Ziele" | implemented, running on the DigiSucht test instance |
+| First add-on: DigiSucht tools, app "Ausgangssituation und Ziele" (dynamic visibility, notification and audit entry on release, reminder in the calendar) | implemented |
+| Gateway enforcement of core gates (DPA, account inactivity) | not implemented |
+| Host API for context, lifecycle events, data export | not implemented |
+| Aggregated calendar page in the core (today add-on dates only appear in the conversation list's upcoming-dates zone) | not implemented |
 
 ## Implementation plan
 
 - **Phase 0:** agree on this ADR; publish the manifest schema and the frontend contract (`oriso-addon/v1`).
-- **Phase 1 (done in the reference implementation):** AddonService with discovery, enablement and gateway; Ingress route; all web-app slots; settings, statistics and `admin.page` in ORISO-Admin.
-- **Phase 2:** gateway enforcement of core gates; host API for context, notifications and audit entries; lifecycle events.
-- **Phase 2b:** calendar entries in an aggregated calendar view in the core.
+- **Phase 1 (done in the reference implementation):** AddonService with discovery, enablement and gateway; Ingress route; all web-app slots; settings, statistics and `admin.page` in ORISO-Admin; notifications, audit entries, calendar entries and dynamic visibility.
+- **Phase 2:** gateway enforcement of core gates; host API for context; lifecycle events.
+- **Phase 2b:** an aggregated calendar page in the core (entries already flow, see status).
 - **Phase 3:** data export integration; first add-on in production use (DigiSucht digital tools), followed by surveys and documentation.
