@@ -1,0 +1,183 @@
+# ADR-032: Add-ons, optional services with their own UI, discovered by the platform and enabled per Träger
+
+- **Status:** Proposed, 2026-11-12. Discussed at the DigiSucht kickoff (Caritas, delphi, BITS GmbH); needs product and technical sign-off.
+- **Numbering:** first drafted as "ADR-031" for the DigiSucht kickoff; ADR-031 is the production SigNoz telemetry decision, so this record is ADR-032.
+- **Date:** 2026-11-06 (updated 2026-11-12 with the results of a working implementation)
+- **Deciders:** ORISO product owner and platform leads; BITS GmbH (DigiSucht) as proposer
+- **Related:** ADR-001 (modules toggleable per tenant and per agency), ADR-010 (per-Träger allowlist computed server-side), ADR-011 (single domain, path-based routing under `/service/*`), ADR-024 (notification matrix), ADR-030 (Activity Timeline); `ORISO-Frontend/src/extensions` (build-time file replacement, unchanged by this ADR)
+- **Reference implementation:** [BITS-GmbH/ORISO-AddonService](https://github.com/BITS-GmbH/ORISO-AddonService), offered for transfer into this organisation once the ADR is accepted; first add-on [BITS-GmbH/oriso-addon-digisucht-tools](https://github.com/BITS-GmbH/oriso-addon-digisucht-tools); host changes in ORISO-Frontend, ORISO-Admin and ORISO-Helm (PRs linked from this ADR's PR)
+
+---
+
+## Context
+
+The DigiSucht instance needs several larger functions that ORISO does not have and that only some Träger will want: nine digital counselling tools (interactive exercises such as Motivationswaage or Konsumtagebuch), a survey tool (questionnaires in counselling and time-limited evaluations for whole user groups) and a counselling documentation system. delphi's tender requires that these are built **modular, usable optionally by other instances, with the core functionality of ORISO unchanged**, and that they are integrated into the shared code base of the Open Resilience Initiative.
+
+ORISO has no runtime extension point today:
+
+- `ORISO-Frontend/src/extensions` replaces source files **at build time**. It works for theming (DigiSucht uses it for fonts, texts and its registration page), but every override is a fork of one file: it cannot import the file it replaces and silently diverges when upstream changes.
+- Features are switched on per Träger through tenant settings (`feature…Enabled` flags), which only works for code that already lives in the core.
+- The backend is a fixed set of Spring services behind ingress-nginx with one Ingress per service (`/service/users`, `/service/agencies`, …, ADR-011). nginx cannot route to services it learns about at runtime.
+
+Building each of these functions into the core would grow ORISO by three large, DigiSucht-driven modules that every other Träger then carries, reviews and upgrades. Keeping them in forks would contradict the tender and fragment the platform.
+
+## Decision drivers
+
+- New functions must not change ORISO's core behaviour, and must be switchable per Träger and per agency (ADR-001).
+- Other operators must be able to install a published add-on into their instance if they want it.
+- Add-ons must feel like part of ORISO: same login, same design, same language and form of address, shown in the places where users already work.
+- Admins manage add-ons in the existing ORISO-Admin, not in a separate admin application per add-on.
+- Deletion, data export and notifications must keep working across core and add-ons (GDPR, tender requirements).
+- Operations stay Kubernetes and Helm based (ADR-011), observable like every other ORISO service.
+
+## Decision
+
+Introduce **add-ons**: separately deployed services that bring a backend and a frontend bundle, are discovered by the platform, and are enabled per Träger. One new core service, the **AddonService**, connects them to ORISO.
+
+```mermaid
+flowchart LR
+  B["Browser\nWeb-App with add-on UI\nORISO-Admin"] --> N["ingress-nginx\n(ADR-011)"]
+  N -- "/service/users …" --> C["Core services\nUser, Tenant, Agency, ConsultingType"]
+  N -- "/service/addons/**" --> S["AddonService (new)\nregistry, gateway, settings, stats"]
+  S -- "short-lived signed token" --> A1["Add-on A\nbackend + UI bundle + own storage"]
+  S -- "…" --> A2["Add-on B"]
+  A1 -. "host API" .-> S
+  S -. "context checks" .-> C
+```
+
+### 1. What an add-on is
+
+- A service in its own Kubernetes namespace (default `addons`), installed with its own Helm chart, written in any language. Add-ons by the ORISO community are expected to use Spring Boot like the core services.
+- It owns its storage. It has no direct access to MariaDB, MongoDB, Redis or Matrix.
+- It carries the label `oriso.io/addon: "true"` on its Service and serves a **manifest** at `GET /.well-known/oriso-addon.json`.
+- It may contain one or more apps.
+
+Manifest (contract `oriso-addon/v1`; `export` and `events` are reserved for section 6 and not evaluated yet):
+
+```json
+{
+  "name": "digisucht-tools",
+  "version": "1.4.0",
+  "contract": "oriso-addon/v1",
+  "apps": [{ "id": "goals", "title": { "de": "Ausgangssituation und Ziele" }, "slots": ["asker.navigation", "consultant.session", "consultant.asker-profile"] }],
+  "ui": "/ui/entry.js",
+  "settings": "/schema/settings.json",
+  "stats": [{ "id": "released", "label": { "de": "Freigegebene Tools" }, "type": "count" }],
+  "health": "/health"
+}
+```
+
+### 2. Discovery and enablement
+
+- The AddonService lists Services with the label in the add-on namespace every 30 seconds (read-only RBAC on Services in that namespace) and reads each manifest. A static list in the Helm values is the fallback for environments without the Kubernetes API.
+- A discovered add-on is **available**, not active. Enablement lives in the AddonService:
+  - A **SuperAdmin** switches an add-on on or off per Träger.
+  - Träger admins can override that per **agency**. An agency override only takes effect while the add-on is enabled for the Träger, so a Träger switch is always a complete off switch.
+  - Like ADR-010, the effective state is computed server-side; a client only learns the add-ons enabled for itself.
+- **Trust model:** installed add-ons are trusted. The operator decides what is installed; there is no per-add-on permission model in v1.
+
+### 3. Backend: one route, one gateway
+
+- One new Ingress route `/service/addons/**` points to the AddonService. No per-add-on Ingress, no change to existing routes (ADR-011).
+- For every request to `/service/addons/<name>/api/**` the AddonService validates the Keycloak token, checks that the add-on is enabled for the caller's Träger and agency, and forwards the request with a **short-lived token** for that add-on only:
+  - RS256, issuer `oriso-addonservice`, audience = the add-on's name, valid for a few minutes.
+  - Claims: subject, username, roles, tenant, and where applicable agency, session and client (`agencyId`, `sessionId`, `askerId`).
+  - The public keys are served at `/service/addons/.well-known/jwks.json`, so add-ons verify tokens without a shared secret and without integrating Keycloak. The user's own token never leaves the core.
+- **Context is checked, not trusted.** The UI asks for context with the headers `X-Oriso-Agency-Id` and `X-Oriso-Session-Id`. The AddonService verifies the agency against the caller's memberships and the session against UserService (only a counsellor with access to that session gets it) and only then puts it into the token, together with the session's client.
+- **Core gates apply to add-ons.** Platform-wide gates such as the DPA gate ("new counselling blocked until the Träger has confirmed the current DPA") or account inactivity are enforced by the gateway, so every add-on respects them without implementing them. The gateway does not try to know add-on semantics; it applies the same gates that block the corresponding core action.
+- Add-ons call back into ORISO only through the **host API** of the AddonService (section 6), authenticated with their own add-on token.
+
+### 4. Frontend: slots and a mount contract
+
+There is one kind of add-on. It declares in its manifest which **slots** its apps appear in; the slot decides who sees the app, where, and which context it receives. An add-on can use several slots, for example the tools add-on gives clients their own page and counsellors a panel in the case view.
+
+| Slot | Audience | Place | Context in addition to user, role and Träger |
+|---|---|---|---|
+| `asker.navigation` | Clients | own page in the navigation of the web app | none |
+| `consultant.navigation` | Counsellors | own page in the navigation of the web app | agency |
+| `consultant.session` | Counsellors | side panel in the case view | agency, open session, its client |
+| `consultant.asker-profile` | Counsellors | tile in the client profile overview | agency, client |
+| `admin.page` | Admins | own page in ORISO-Admin | admin level, Träger, agency where applicable |
+
+- When a user opens an add-on app, the web app or ORISO-Admin loads the add-on's bundle from `/service/addons/<name>/ui/…` (same origin, no change to security headers) and mounts it into the slot.
+- **Bundles are public code.** A browser's module import cannot send a bearer token, so `/ui/**` is served without authentication. Bundles must contain code only, never data; everything user-related goes through the authenticated API.
+- An add-on can further restrict an app by role inside its slot; it cannot widen the audience of a slot.
+- **Lifecycle:** the bundle exports `bootstrap`, `mount(element, context)`, `unmount` and optionally `update(context)`, the shape of a single-spa parcel, so authors can use existing adapters. `update` lets the host pass a new context (for example another session) without remounting. `context` carries the user and role, tenant, locale including the form of address (`de` / `de@informal`), the tenant's theme tokens, the slot context from the table above, an API client bound to the add-on's own route, `navigate` and `notify`.
+- **Shared React:** the host provides its React, ReactDOM client and JSX runtime on `globalThis.__ORISO_ADDON_SHARED__`. An add-on uses these instead of bundling React, which keeps one React instance per page and lets a bundle be a plain ES module without a build step. Other libraries, including MUI, are bundled by the add-on.
+- Add-ons ship their own translations; the host only passes the active locale.
+
+### 5. Admin: settings, statistics and admin pages in ORISO-Admin
+
+- **Settings** need no UI from the add-on: the manifest points to a **JSON Schema**, ORISO-Admin renders the form, and the AddonService stores the values and serves them to the add-on through the host API. v1 supports a deliberately small subset: an object of `string`, `boolean`, `number` and `integer` properties with `title`, `description` and `default`, plus `enum` and `maxLength` for strings and `minimum`/`maximum` for numbers. Values merge in the order **schema defaults, Träger, agency**.
+- **Statistics:** the manifest declares them (id, label, type). The AddonService fetches aggregated, anonymous values per Träger from the add-on's `/stats?tenantId=…` with a service token (role `addon-service`); add-ons never push. ORISO-Admin shows them as tiles.
+- **Admin pages** (`admin.page`) are for add-ons whose administration is more than configuration, for example the survey editor. ORISO-Admin lists them in its navigation and mounts them with the same contract as the web app.
+
+### 6. Host API and lifecycle events
+
+- **Settings:** `GET /addons/host/settings` returns the effective settings for the token's Träger and agency (implemented).
+- **Context:** resolve the counsellor(s) and agency of a client, and the sessions of the calling user, within the caller's tenant (planned).
+- **Notifications and e-mail:** create Activity Timeline events and e-mails through the existing core channels (ADR-024, ADR-030). Add-ons have no mail configuration of their own; they inherit the platform's SMTP settings, and if mail is off in the core it is off for add-ons too (planned).
+- **Data export:** add-ons expose an export endpoint; the central export collects it, configurable per admin level as the tender requires (planned; depends on the central export).
+- **Lifecycle events** via RabbitMQ (already part of the platform): `user.deleted`, `session.deleted`, `tenant.deleted`, so add-ons delete their data with the core. Handlers must be **idempotent and tolerate unknown ids**: a Träger created and rolled back within a second still produces a deletion event, and events can arrive twice (planned).
+
+### 7. Operations
+
+- Network policies allow traffic into the add-on namespace only from the AddonService; outbound only to the AddonService host API and the add-on's own storage.
+- Every add-on exposes its health route and OpenTelemetry, and appears in the Health Dashboard and SigNoz like a core service.
+- The AddonService can switch an add-on off per Träger or globally at any time.
+- The AddonService is part of the ORISO Helm chart, disabled by default.
+
+### 8. Versioning
+
+- The contract is versioned (`oriso-addon/v1`), independently of ORISO releases. Breaking changes require a new contract version; the AddonService can serve more than one version during a transition.
+- Each ORISO release states which contract versions its web app, ORISO-Admin and AddonService support. Operators who stay on an older release line need the host side backported to it; the reference implementation was backported to 2.0.11 for the DigiSucht test instance.
+
+## Consequences
+
+**Positive**
+
+- Large, Träger-specific functions stay out of the core and its review queue; the core grows by one service and a small set of frontend slots.
+- Add-ons release independently; ORISO upgrades do not wait for partners.
+- Other operators can install published add-ons and enable them for their own Träger.
+- One place for auth, enablement, core gates, logging and the kill switch.
+
+**Negative / cost**
+
+- A new core service to build and run, and a public contract that ORISO has to keep stable.
+- Shared React couples add-ons to the host's React major; a React major upgrade in ORISO needs an announcement and compatible add-on releases.
+- Trusted, in-page add-ons can see what the page can see. This is acceptable only because operators choose what they install; it must be stated in the operator documentation.
+- ORISO-Admin needs a JSON Schema form, statistics tiles and the same slot loader as the web app.
+
+## Considered options
+
+- **Build the functions into the core.** Rejected: contradicts the tender's "core unchanged" requirement and makes every Träger carry DigiSucht-specific modules.
+- **Only build-time file replacement (`src/extensions`).** Rejected: no backend story, every override is a fork of an upstream file, nothing can be shared with other instances. It stays as the theming mechanism.
+- **One Ingress per add-on, no gateway.** Rejected: every add-on would have to validate Keycloak tokens, enablement and core gates itself, there is no central kill switch, and every install touches the ingress setup.
+- **Iframe-only integration.** Rejected for v1: strongest isolation, but no shared theme or React, awkward layout in slots. Can be added later as a second integration mode for untrusted add-ons.
+- **A permission or scope model per add-on.** Deferred: with operator-installed, trusted add-ons it adds approval work without a real gain in v1.
+- **Enablement as tenant settings in TenantService.** Rejected: agency overrides and per-add-on state would add a second, differently shaped settings store to TenantService; the AddonService already owns the registry and the gateway check.
+
+## Open questions
+
+1. Is the slot list right for v1, and which slots does ORISO want to add later (for example inside the chat)?
+2. Does ORISO already have a central data export that add-ons can feed, or does it have to be built?
+3. Who maintains the contract and the AddonService long term, and does the repository move into this organisation?
+
+## Implementation status (2026-11-12)
+
+| Part | State |
+|---|---|
+| AddonService: discovery, enablement per Träger and agency, gateway with signed tokens and verified context, settings, statistics, host API for settings | implemented, 27 tests, running on the DigiSucht test instance |
+| Gateway enforcement of core gates (DPA, account inactivity) | not implemented |
+| Host API for context and notifications, lifecycle events, data export | not implemented |
+| ORISO-Frontend: all four web-app slots | implemented, PR to `dev` |
+| ORISO-Admin: enablement, agency overrides, settings form, statistics, `admin.page` | implemented, PR to `dev` |
+| ORISO-Helm: AddonService, disabled by default | PR |
+| First add-on: DigiSucht tools, app "Ausgangssituation und Ziele" | implemented, running on the DigiSucht test instance |
+
+## Implementation plan
+
+- **Phase 0:** agree on this ADR; publish the manifest schema and the frontend contract (`oriso-addon/v1`).
+- **Phase 1 (done in the reference implementation):** AddonService with discovery, enablement and gateway; Ingress route; all web-app slots; settings, statistics and `admin.page` in ORISO-Admin.
+- **Phase 2:** gateway enforcement of core gates; host API for context and notifications; lifecycle events.
+- **Phase 3:** data export integration; first add-on in production use (DigiSucht digital tools), followed by surveys and documentation.

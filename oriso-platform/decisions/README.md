@@ -46,6 +46,11 @@ not its `_artifacts/` subfolder). The series was re-synchronised on 2026-08-17 f
 - [`ADR-031-production-telemetry-boundary-for-signoz.md`](ADR-031-production-telemetry-boundary-for-signoz.md)
   — proposed 2026-11-07 for E2E #99 F.4. Sets the telemetry, access, retention and recovery gates for production SigNoz.
 
+- `ADR-032-addons-optional-services-with-their-own-ui.md`: proposed 2026-11-12 by BITS GmbH (DigiSucht):
+  optional add-ons with their own backend and UI, discovered in Kubernetes, enabled per Träger and agency
+  by a new AddonService that also acts as their gateway, and mounted into fixed slots of the web app and
+  ORISO-Admin. Reference implementation in BITS-GmbH/ORISO-AddonService. Needs product and technical sign-off.
+
 New decisions in this section are repository-owned records and are not part of the unchanged
 19-file import described above.
 

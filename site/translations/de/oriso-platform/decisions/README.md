@@ -21,6 +21,8 @@ Dieses Verzeichnis enthält die Architekturentscheidungsprotokolle (ADRs) auf Pl
 - `ADR-031-production-telemetry-boundary-for-signoz.md` — vorgeschlagen am 2026-11-07 für E2E #99 F.4.
   Beschreibt die Anforderungen an Telemetrie, Zugriff, Aufbewahrung und Wiederherstellung vor dem Produktionseinsatz von SigNoz.
 
+- `ADR-032-addons-optional-services-with-their-own-ui.md`: am 2026-11-12 von der BITS GmbH (DigiSucht) vorgeschlagen: optionale Add-ons mit eigenem Backend und eigener Oberfläche, in Kubernetes erkannt, je Träger und Beratungsstelle über einen neuen AddonService freigeschaltet, der auch ihr Gateway ist, und in feste Slots der Web-App und von ORISO-Admin eingebunden. Referenzimplementierung in BITS-GmbH/ORISO-AddonService. Braucht noch die fachliche und technische Freigabe.
+
 Neue Entscheidungen in diesem Abschnitt gehören zum Repository und sind kein Teil des oben beschriebenen unveränderten Imports von 19 Dateien.
 
 ## Bekannte Probleme
