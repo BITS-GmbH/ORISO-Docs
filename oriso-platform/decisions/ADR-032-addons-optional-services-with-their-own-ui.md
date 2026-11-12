@@ -52,7 +52,7 @@ flowchart LR
 - It carries the label `oriso.io/addon: "true"` on its Service and serves a **manifest** at `GET /.well-known/oriso-addon.json`.
 - It may contain one or more apps.
 
-Manifest (contract `oriso-addon/v1`; `export` and `events` are reserved for section 6 and not evaluated yet):
+Manifest (contract `oriso-addon/v1`; entries for export, calendar and lifecycle events are reserved for section 6 and not evaluated yet):
 
 ```json
 {
@@ -116,7 +116,9 @@ There is one kind of add-on. It declares in its manifest which **slots** its app
 
 - **Settings:** `GET /addons/host/settings` returns the effective settings for the token's Träger and agency (implemented).
 - **Context:** resolve the counsellor(s) and agency of a client, and the sessions of the calling user, within the caller's tenant (planned).
-- **Notifications and e-mail:** create Activity Timeline events and e-mails through the existing core channels (ADR-024, ADR-030). Add-ons have no mail configuration of their own; they inherit the platform's SMTP settings, and if mail is off in the core it is off for add-ons too (planned).
+- **Notifications:** an add-on asks the core to notify a person (for example "a new tool has been released for you") with a title, a short text, a link back into the add-on and one flag: important or not. It never chooses a channel. The core delivers through its existing channels (Activity Timeline, e-mail, push; ADR-024, ADR-030) according to the person's own notification preferences, and only addresses people within the caller's context: the caller's Träger, and clients only through a session the caller may access. Add-ons have no mail configuration of their own; if mail is off in the core it is off for add-ons too (planned).
+- **Audit entries (write only):** an add-on reports auditable actions (for example "counsellor released tool X to client Y"). The AddonService stamps each entry with actor, time, Träger and add-on, stores it, and ORISO-Admin shows it in its existing Logs area next to the core's audit logs, with the same visibility rules per admin level. Add-ons can only write entries; they cannot read the log, not even their own entries (planned).
+- **Calendar entries (read only):** an add-on can declare that it has dated entries such as appointments, deadlines or reminders. The core asks it for the entries of one person in a time range, the way it fetches statistics, and shows them in an aggregated calendar view together with its own appointments. Each entry has a title, a start (and optional end), a kind and a link into the add-on. The calendar only shows and links; booking, moving or cancelling happens inside the add-on (planned).
 - **Data export:** add-ons expose an export endpoint; the central export collects it, configurable per admin level as the tender requires (planned; depends on the central export).
 - **Lifecycle events** via RabbitMQ (already part of the platform): `user.deleted`, `session.deleted`, `tenant.deleted`, so add-ons delete their data with the core. Handlers must be **idempotent and tolerate unknown ids**: a Träger created and rolled back within a second still produces a deletion event, and events can arrive twice (planned).
 
@@ -169,7 +171,7 @@ There is one kind of add-on. It declares in its manifest which **slots** its app
 |---|---|
 | AddonService: discovery, enablement per Träger and agency, gateway with signed tokens and verified context, settings, statistics, host API for settings | implemented, 27 tests, running on the DigiSucht test instance |
 | Gateway enforcement of core gates (DPA, account inactivity) | not implemented |
-| Host API for context and notifications, lifecycle events, data export | not implemented |
+| Host API for context, notifications and audit entries; calendar entries; lifecycle events; data export | not implemented |
 | ORISO-Frontend: all four web-app slots | implemented, PR to `dev` |
 | ORISO-Admin: enablement, agency overrides, settings form, statistics, `admin.page` | implemented, PR to `dev` |
 | ORISO-Helm: AddonService, disabled by default | PR |
@@ -179,5 +181,6 @@ There is one kind of add-on. It declares in its manifest which **slots** its app
 
 - **Phase 0:** agree on this ADR; publish the manifest schema and the frontend contract (`oriso-addon/v1`).
 - **Phase 1 (done in the reference implementation):** AddonService with discovery, enablement and gateway; Ingress route; all web-app slots; settings, statistics and `admin.page` in ORISO-Admin.
-- **Phase 2:** gateway enforcement of core gates; host API for context and notifications; lifecycle events.
+- **Phase 2:** gateway enforcement of core gates; host API for context, notifications and audit entries; lifecycle events.
+- **Phase 2b:** calendar entries in an aggregated calendar view in the core.
 - **Phase 3:** data export integration; first add-on in production use (DigiSucht digital tools), followed by surveys and documentation.
