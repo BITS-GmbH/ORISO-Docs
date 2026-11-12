@@ -74,6 +74,10 @@ Manifest (contract `oriso-addon/v1`; entries for export, calendar and lifecycle 
   - A **SuperAdmin** switches an add-on on or off per Träger.
   - Träger admins can override that per **agency**. An agency override only takes effect while the add-on is enabled for the Träger, so a Träger switch is always a complete off switch.
   - Like ADR-010, the effective state is computed server-side; a client only learns the add-ons enabled for itself.
+- **What a user sees is decided in three stages, all in the AddonService; the UI only shows what the registry returns:**
+  1. *Enablement (operator, static):* the Träger switch and agency overrides. The registry evaluates them **in context**: the web app asks with the same `X-Oriso-Agency-Id` / `X-Oriso-Session-Id` headers as its API calls, so a counsellor in a case sees only add-ons enabled for that case's agency, and a disabled add-on shows no button, tile or menu entry at all. Without a context header the registry uses the caller's own agencies (a counsellor's agencies, a client's session agencies): an add-on is listed if it is enabled for at least one of them.
+  2. *Slot and role (manifest, static):* the slot decides the audience (section 4).
+  3. *App state (add-on, dynamic):* an app marked `"visibility": "dynamic"` in the manifest is only listed if the add-on says so for this person. The AddonService asks `GET /visibility` with a user-scoped add-on token (including agency and session context) and gets per app `visible` and an optional `badge` count (for example "1 new"). Answers are cached for a short time per user and context. If the add-on does not answer in time, a dynamic app stays hidden. Example: the client's menu entry for a tool only appears once a counsellor has released it.
 - **Trust model:** installed add-ons are trusted. The operator decides what is installed; there is no per-add-on permission model in v1.
 
 ### 3. Backend: one route, one gateway
@@ -169,9 +173,11 @@ There is one kind of add-on. It declares in its manifest which **slots** its app
 
 | Part | State |
 |---|---|
-| AddonService: discovery, enablement per Träger and agency, gateway with signed tokens and verified context, settings, statistics, host API for settings | implemented, 27 tests, running on the DigiSucht test instance |
+| AddonService: discovery, enablement per Träger and agency, gateway with signed tokens and verified context, settings, statistics, host API for settings | implemented, running on the DigiSucht test instance |
+| Registry in context (agency, session) and dynamic app visibility with badges | in progress |
 | Gateway enforcement of core gates (DPA, account inactivity) | not implemented |
-| Host API for context, notifications and audit entries; calendar entries; lifecycle events; data export | not implemented |
+| Host API for notifications and audit entries; calendar entries; add-on tab in the admin Logs area | implemented, running on the DigiSucht test instance (notifications need the UserService endpoint `POST /users/event-notifications/addon`) |
+| Host API for context, lifecycle events, data export | not implemented |
 | ORISO-Frontend: all four web-app slots | implemented, PR to `dev` |
 | ORISO-Admin: enablement, agency overrides, settings form, statistics, `admin.page` | implemented, PR to `dev` |
 | ORISO-Helm: AddonService, disabled by default | PR |
