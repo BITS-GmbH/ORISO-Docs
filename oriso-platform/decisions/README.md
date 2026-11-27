@@ -62,6 +62,9 @@ not its `_artifacts/` subfolder). The series was re-synchronised on 2026-08-17 f
 - [`ADR-038-one-user-id-rule-for-all-advice-seekers.md`](ADR-038-one-user-id-rule-for-all-advice-seekers.md)
   — proposed 2026-11-21 (ORISO-UserService#1697, ORISO-Frontend#2347). One User-ID rule for every advice seeker, guests included: names from the guest identity catalog, guests recognised by registration type instead of the `anon_`/`Anonymous-` prefix, one creation path, legacy names kept, a CI guard against new prefix checks. Extends ADR-029 §3.
 
+- [`ADR-039-registration-processes-answers-and-routing.md`](ADR-039-registration-processes-answers-and-routing.md)
+  Proposed 2026-11-27 (BITS GmbH, DigiSucht; epic ORISO-Admin#1565). The Mailberatung check-in becomes a process (Ablauf) of pages with blocks, edited in its own Registrierung tab; answers are stored on the advice seeker's profile for counsellors; matching adds language from counsellor languages. Amends ADR-036 decisions 11, 18, 29, 30, 37 and 41.
+
 - Amendments 2026-11-17 (ORISO-UserService#1662, ORISO-Frontend#2287): **ADR-029** — guest account
   mode per link (delete after session, guests choose, permanent) with platform/Träger caps,
   keep-account by entry mode, no e-mail for temporary accounts, guest links for group calls.
